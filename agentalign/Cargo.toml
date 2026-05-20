@@ -18,3 +18,4 @@ sha2.workspace = true
 rusqlite = { version = "0.31", features = ["bundled"] }
 keyring = "3"
 walkdir = "2"
+hex.workspace = true
