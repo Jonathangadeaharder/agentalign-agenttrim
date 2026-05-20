@@ -3,6 +3,7 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 
 use agenttrim::analyze;
+use agenttrim::analyze::ledger_reader;
 use agenttrim::prune;
 use agenttrim::time_provider::SystemTimeProvider;
 use agentalign_shared::models::McpServerDefinition;
@@ -60,6 +61,14 @@ enum Commands {
         #[arg(long)]
         dry_run: bool,
     },
+    /// Show usage stats from SQLite ledger
+    Status,
+    /// Daemon: watch skill/MCP filesystem for access, log usage to SQLite
+    Watch {
+        /// Poll interval in seconds (default: 60)
+        #[arg(long, default_value_t = 60)]
+        interval: u64,
+    },
     /// Configure thresholds and allowlists
     Config,
 }
@@ -82,6 +91,12 @@ fn main() {
         } => run_prune(agents_root, mcp_config, force, dry_run),
         Commands::Vacuum { dry_run } => {
             run_vacuum(dry_run);
+        }
+        Commands::Status => {
+            run_status();
+        }
+        Commands::Watch { interval } => {
+            run_watch(interval);
         }
         Commands::Config => {
             println!("⚙️  config — configure thresholds and allowlists");
@@ -378,6 +393,100 @@ fn run_prune(
     }
 
     println!("  ✓ Prune complete.");
+}
+
+fn run_status() {
+    match ledger_reader::get_usage_stats() {
+        Ok(entries) => {
+            if entries.is_empty() {
+                println!("No usage records found. The `agenttrim watch` daemon will populate this automatically.");
+            } else {
+                println!("{:<22} {:>8} {:>12}", "Server", "Calls", "Last Used");
+                println!("{}", "-".repeat(46));
+                for e in &entries {
+                    println!("{:<22} {:>8} {:>12}", e.server_id, e.total_call_count, e.last_used_timestamp);
+                }
+            }
+        }
+        Err(e) => eprintln!("Error reading usage: {}", e),
+    }
+
+    match ledger_reader::get_tool_usage_stats() {
+        Ok(tool_entries) => {
+            if !tool_entries.is_empty() {
+                println!();
+                println!("{:<22} {:<22} {:>8} {:>12}", "Server", "Tool", "Calls", "Last Used");
+                println!("{}", "-".repeat(68));
+                for e in &tool_entries {
+                    let tool = e.tool_name.as_deref().unwrap_or("(none)");
+                    println!("{:<22} {:<22} {:>8} {:>12}", e.server_id, tool, e.total_calls, e.last_used_timestamp);
+                }
+            }
+        }
+        Err(e) => eprintln!("Error reading tool usage: {}", e),
+    }
+}
+
+fn run_watch(interval_secs: u64) {
+    use std::collections::HashMap;
+    use std::time::SystemTime;
+
+    println!("Starting agenttrim watch daemon (poll interval: {interval_secs}s)");
+    println!("Watching ~/.agents/skills/ for SKILL.md changes...");
+
+    let skills_dir = dirs::home_dir()
+        .expect("HOME must be set")
+        .join(".agents")
+        .join("skills");
+
+    if !skills_dir.exists() {
+        println!("Skills directory does not exist: {}", skills_dir.display());
+        println!("Create it or run `agentalign migrate` first.");
+        return;
+    }
+
+    let mut known_mtimes: HashMap<String, Option<SystemTime>> = HashMap::new();
+
+    loop {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs() as i64)
+            .unwrap_or(0);
+
+        if let Ok(entries) = std::fs::read_dir(&skills_dir) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if !path.is_dir() {
+                    continue;
+                }
+
+                let skill_name = match path.file_name().and_then(|n| n.to_str()) {
+                    Some(name) => name.to_string(),
+                    None => continue,
+                };
+
+                let skill_md = path.join("SKILL.md");
+                let current_mtime = skill_md.exists().then(|| {
+                    std::fs::metadata(&skill_md)
+                        .ok()
+                        .and_then(|m| m.modified().ok())
+                }).flatten();
+
+                let prev_mtime = known_mtimes.get(&skill_name).copied().flatten();
+
+                if current_mtime != prev_mtime || !known_mtimes.contains_key(&skill_name) {
+                    if let Err(e) = ledger_reader::log_usage(&skill_name, None, "agenttrim-watch", None) {
+                        eprintln!("  ✗ Error logging usage for '{}': {}", skill_name, e);
+                    } else {
+                        println!("  [{now}] logged usage: {skill_name}");
+                    }
+                    known_mtimes.insert(skill_name.clone(), current_mtime);
+                }
+            }
+        }
+
+        std::thread::sleep(std::time::Duration::from_secs(interval_secs));
+    }
 }
 
 fn run_vacuum(dry_run: bool) {
