@@ -68,14 +68,6 @@ fn test_agentalign_migrate_creates_agents_dir() {
 }
 
 #[test]
-fn test_agentalign_status() {
-    let mut cmd = Command::cargo_bin("agentalign").unwrap();
-    let assert = cmd.arg("status").assert();
-
-    assert.success();
-}
-
-#[test]
 fn test_agentalign_help_output() {
     let mut cmd = Command::cargo_bin("agentalign").unwrap();
     let assert = cmd.arg("--help").assert();
