@@ -54,7 +54,14 @@ pub fn open_db() -> Result<Connection> {
     .context("failed to create usage_log schema")?;
 
     // Migrate existing databases: add tool_name column if missing
-    let _ = conn.execute_batch("ALTER TABLE usage_log ADD COLUMN tool_name TEXT;");
+    let column_exists = conn
+        .prepare("SELECT 1 FROM pragma_table_info('usage_log') WHERE name = 'tool_name'")
+        .and_then(|mut stmt| stmt.exists([]))
+        .unwrap_or(true);
+    if !column_exists {
+        conn.execute("ALTER TABLE usage_log ADD COLUMN tool_name TEXT", [])
+            .context("failed to add tool_name column to existing usage_log table")?;
+    }
 
     Ok(conn)
 }
@@ -165,11 +172,7 @@ pub fn get_tool_usage_stats() -> Result<Vec<ToolUsageEntry>> {
         })
         .context("failed to query tool usage stats")?;
 
-    let mut results = Vec::new();
-    for entry in entries {
-        results.push(entry.context("failed to read tool usage row")?);
-    }
-    Ok(results)
+    entries.map(|e| e.context("failed to read tool usage row")).collect()
 }
 
 // ---------------------------------------------------------------------------
