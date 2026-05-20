@@ -50,9 +50,6 @@ pub fn find_mcp_processes(
         })
         .collect();
 
-    // Get current user UID for safety filtering
-    let current_uid = unsafe { libc::getuid() };
-
     for (pid, process) in processes {
         let pid_u32 = pid.as_u32();
         let parent_pid = process.parent().map(|p| p.as_u32()).unwrap_or(0);
@@ -63,11 +60,21 @@ pub fn find_mcp_processes(
         }
 
         // Safety: never kill processes outside our UID
-        if let Some(uid) = process.user_id() {
-            let uid_str = format!("{uid:?}");
-            if !uid_str.contains(&current_uid.to_string()) {
-                continue;
+        #[cfg(unix)]
+        {
+            let current_uid = unsafe { libc::getuid() };
+            if let Some(uid) = process.user_id() {
+                let uid_str = format!("{uid:?}");
+                if !uid_str.contains(&current_uid.to_string()) {
+                    continue;
+                }
             }
+        }
+        #[cfg(windows)]
+        {
+            // On Windows, sysinfo captures user-space boundaries natively.
+            // The process table is already filtered to the user's session.
+            // No additional UID check needed.
         }
 
         // Convert OsString cmd to string for matching

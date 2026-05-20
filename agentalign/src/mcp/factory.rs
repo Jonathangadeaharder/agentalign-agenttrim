@@ -43,6 +43,21 @@ impl AgentType {
             AgentType::Codex => "codex",
         }
     }
+
+    /// Parse from string name (case-insensitive).
+    pub fn from_name(name: &str) -> Option<AgentType> {
+        match name.to_lowercase().as_str() {
+            "claude" => Some(AgentType::Claude),
+            "cursor" => Some(AgentType::Cursor),
+            "vscode" | "vs-code" | "visual studio code" => Some(AgentType::VSCode),
+            "copilot" => Some(AgentType::Copilot),
+            "windsurf" => Some(AgentType::Windsurf),
+            "zed" => Some(AgentType::Zed),
+            "gemini" => Some(AgentType::Gemini),
+            "codex" => Some(AgentType::Codex),
+            _ => None,
+        }
+    }
 }
 
 /// Factory for constructing MCP format strategy instances.

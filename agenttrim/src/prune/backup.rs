@@ -77,9 +77,11 @@ pub fn list_backups() -> Result<Vec<PathBuf>> {
 
 /// Restore files from a backup directory to their original locations.
 ///
-/// Each subdirectory or file in the backup is restored to:
-/// - `~/.agents/<backup_name>/` for top-level items
-/// This means backups contain relative paths from where they were taken.
+/// Uses the backup directory name to infer the correct subdirectory target.
+/// - If name contains "skills" → restore to `~/.agents/skills/`
+/// - Otherwise → restore to `~/.agents/`
+///
+/// This prevents skill backups from being dropped into the wrong parent directory.
 pub fn restore_backup(backup_path: &Path) -> Result<()> {
     if !backup_path.is_dir() {
         anyhow::bail!("Backup path is not a directory: {}", backup_path.display());
@@ -88,14 +90,23 @@ pub fn restore_backup(backup_path: &Path) -> Result<()> {
     let home = dirs::home_dir().context("Cannot determine home directory")?;
     let agents_root = home.join(".agents");
 
-    for entry in WalkDir::new(backup_path)
-        .min_depth(1)
-        .max_depth(1)
-    {
+    let is_skill_backup = backup_path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .map(|s| s.contains("skills"))
+        .unwrap_or(false);
+
+    let target_root = if is_skill_backup {
+        agents_root.join("skills")
+    } else {
+        agents_root
+    };
+
+    for entry in WalkDir::new(backup_path).min_depth(1).max_depth(1) {
         let entry = entry?;
         let src = entry.path();
         let file_name = src.file_name().unwrap_or_default();
-        let dest = agents_root.join(file_name);
+        let dest = target_root.join(file_name);
 
         if src.is_dir() {
             copy_dir_recursive(src, &dest)?;

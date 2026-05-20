@@ -1,13 +1,13 @@
-mod analyze;
-mod prune;
-
 use clap::{Parser, Subcommand};
 use std::collections::HashMap;
 use std::path::PathBuf;
 
+use agenttrim::analyze;
+use agenttrim::prune;
+use agenttrim::time_provider::SystemTimeProvider;
 use agentalign_shared::models::McpServerDefinition;
 
-use crate::analyze::validation_hook::{IssueSeverity, PrePurgeValidation};
+use analyze::validation_hook::{IssueSeverity, PrePurgeValidation};
 
 #[derive(Parser)]
 #[command(name = "agenttrim", about = "Telemetry-Driven Pruning & Vacuum Engine")]
@@ -125,7 +125,9 @@ fn run_analyze(
     }
     println!("  threshold:    {threshold_days} days");
 
+    let tp = SystemTimeProvider;
     match crate::analyze::run_full_analysis(
+        &tp,
         &agents_root,
         &mcp_config,
         projects_root,
@@ -209,8 +211,10 @@ fn run_prune(
     // Run analysis first
     let projects_root = None;
     let threshold_days: u64 = 90;
+    let tp = SystemTimeProvider;
 
     let report = match crate::analyze::run_full_analysis(
+        &tp,
         &agents_root,
         &mcp_config,
         projects_root,
@@ -262,7 +266,8 @@ fn run_prune(
     println!();
     println!("=== Validation ===");
 
-    match PrePurgeValidation::validate(
+    let validator = PrePurgeValidation::new(&tp);
+    match validator.validate(
         &all_reports.iter().map(|r| (*r).clone()).collect::<Vec<_>>(),
     ) {
         Ok(issues) => {

@@ -16,7 +16,8 @@ use std::path::Path;
 use crate::analyze::mcp::McpAnalyzer;
 use crate::analyze::process_scanner::{find_mcp_processes, McpProcess};
 use crate::analyze::safety_matrix::SafetyMatrix;
-use crate::analyze::skills::SkillAnalyzer;
+use crate::analyze::skills::{RealUsageStore, SkillAnalyzer};
+use crate::time_provider::TimeProvider;
 
 /// Comprehensive report from a full analysis run.
 #[derive(Debug, Clone)]
@@ -43,13 +44,16 @@ pub struct FullAnalysisReport {
 /// `projects_root` — optional path for static text reference scanning.
 /// `threshold_days` — inactivity threshold (default 90).
 pub fn run_full_analysis(
+    tp: &dyn TimeProvider,
     agents_root: &Path,
     mcp_config_path: &Path,
     projects_root: Option<&Path>,
     threshold_days: u64,
 ) -> Result<FullAnalysisReport> {
     // Run skill analysis
-    let skill_reports = SkillAnalyzer::analyze(agents_root, threshold_days, projects_root)?;
+    let store = RealUsageStore;
+    let analyzer = SkillAnalyzer::new(tp, &store);
+    let skill_reports = analyzer.analyze(agents_root, threshold_days, projects_root)?;
 
     // Run MCP server analysis
     let mcp_reports = McpAnalyzer::analyze(mcp_config_path, threshold_days)?;

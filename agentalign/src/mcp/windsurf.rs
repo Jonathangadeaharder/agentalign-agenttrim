@@ -19,7 +19,7 @@
 
 use agentalign_shared::error::{AdapterError, Result};
 use agentalign_shared::models::{
-    CanonicalWorkspaceState, ClientCapabilities, PlaceholderStyle,
+    CanonicalWorkspaceState, ClientCapabilities,
 };
 use agentalign_shared::traits::{ConfigurationAdapter, McpFormatStrategy};
 use serde_json::{json, Value as JsonValue};
@@ -33,7 +33,7 @@ impl ConfigurationAdapter for WindsurfStrategy {
         "windsurf"
     }
 
-    fn deserialize_to_canonical(&self, raw: &str) -> Result<JsonValue> {
+    fn deserialize_to_canonical(&self, raw: &str, _base_path: &Path) -> Result<JsonValue> {
         let raw_val: JsonValue = serde_json::from_str(raw)?;
 
         let servers = raw_val
@@ -97,7 +97,7 @@ impl ConfigurationAdapter for WindsurfStrategy {
         Ok(JsonValue::Object(root))
     }
 
-    fn serialize_from_canonical(&self, canonical: &JsonValue) -> Result<String> {
+    fn serialize_from_canonical(&self, canonical: &JsonValue, _base_path: &Path) -> Result<String> {
         let mcp = canonical
             .get("mcp")
             .and_then(|v| v.as_object())
@@ -164,8 +164,8 @@ impl ConfigurationAdapter for WindsurfStrategy {
         Ok(serde_json::to_string_pretty(&JsonValue::Object(root))?)
     }
 
-    fn target_config_path(&self, home: &Path) -> std::path::PathBuf {
-        home.join(".windsurf").join(".mcp.json")
+    fn target_config_path(&self, base_path: &Path) -> std::path::PathBuf {
+        base_path.join(".windsurf").join(".mcp.json")
     }
 
     fn normalize_env(&self, env: &HashMap<String, String>) -> HashMap<String, String> {
