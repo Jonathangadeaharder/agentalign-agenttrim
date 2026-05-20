@@ -40,16 +40,6 @@ enum Commands {
         #[arg(long)]
         list: bool,
     },
-    /// Show skill usage report
-    Status,
-    /// Mark a skill as used/unused
-    Mark {
-        /// Skill name to mark
-        skill: Option<String>,
-        /// Mark as unused instead of used
-        #[arg(long)]
-        unused: bool,
-    },
 }
 
 /// Locate known agent config directories on this system.
@@ -276,12 +266,6 @@ fn main() {
             }
         }
 
-        Commands::Status => {
-            println!("Usage stats moved to `agenttrim status`. Run: agenttrim status");
-        }
 
-        Commands::Mark { skill: _, unused: _ } => {
-            println!("Usage marking moved to `agenttrim` daemon. It watches skill filesystem access automatically.");
-        }
     }
 }
