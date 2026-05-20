@@ -6,8 +6,17 @@ use std::path::PathBuf;
 
 use crate::analyze::UsageEntry;
 
+/// Tool-level usage entry for per-tool monitoring.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ToolUsageEntry {
+    pub server_id: String,
+    pub tool_name: Option<String>,
+    pub total_calls: u64,
+    pub last_used_timestamp: i64,
+}
+
 /// Path to the SQLite usage database.
-fn db_path() -> Result<PathBuf> {
+pub fn db_path() -> Result<PathBuf> {
     let base = dirs::home_dir()
         .context("failed to resolve home directory")?
         .join(".agents");
@@ -32,6 +41,7 @@ pub fn open_db() -> Result<Connection> {
         CREATE TABLE IF NOT EXISTS usage_log (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             server_id TEXT NOT NULL,
+            tool_name TEXT,
             agent TEXT NOT NULL,
             action TEXT NOT NULL DEFAULT 'call',
             timestamp INTEGER NOT NULL,
@@ -43,17 +53,27 @@ pub fn open_db() -> Result<Connection> {
     )
     .context("failed to create usage_log schema")?;
 
+    // Migrate existing databases: add tool_name column if missing
+    let column_exists = conn
+        .prepare("SELECT 1 FROM pragma_table_info('usage_log') WHERE name = 'tool_name'")
+        .and_then(|mut stmt| stmt.exists([]))
+        .unwrap_or(true);
+    if !column_exists {
+        conn.execute("ALTER TABLE usage_log ADD COLUMN tool_name TEXT", [])
+            .context("failed to add tool_name column to existing usage_log table")?;
+    }
+
     Ok(conn)
 }
 
 /// Log a usage event for a given server+agent combination.
-pub fn log_usage(server_id: &str, agent: &str, byte_cost: Option<u64>) -> Result<()> {
+pub fn log_usage(server_id: &str, tool_name: Option<&str>, agent: &str, byte_cost: Option<u64>) -> Result<()> {
     let conn = open_db()?;
     let now = chrono_now();
 
     conn.execute(
-        "INSERT INTO usage_log (server_id, agent, action, timestamp, byte_cost) VALUES (?1, ?2, 'call', ?3, ?4)",
-        rusqlite::params![server_id, agent, now, byte_cost.map(|c| c as i64)],
+        "INSERT INTO usage_log (server_id, tool_name, agent, action, timestamp, byte_cost) VALUES (?1, ?2, ?3, 'call', ?4, ?5)",
+        rusqlite::params![server_id, tool_name, agent, now, byte_cost.map(|c| c as i64)],
     )
     .context("failed to insert usage log entry")?;
 
@@ -122,6 +142,37 @@ pub fn get_unused_since(timestamp: i64) -> Result<Vec<String>> {
         results.push(s.context("failed to read server_id")?);
     }
     Ok(results)
+}
+
+/// Aggregate usage stats grouped by server_id + tool_name.
+pub fn get_tool_usage_stats() -> Result<Vec<ToolUsageEntry>> {
+    let conn = open_db()?;
+    let mut stmt = conn
+        .prepare(
+            "SELECT server_id, tool_name, COUNT(*) as total_calls, MAX(timestamp) as last_used
+             FROM usage_log
+             GROUP BY server_id, tool_name
+             ORDER BY last_used DESC",
+        )
+        .context("failed to prepare tool usage stats query")?;
+
+    let entries = stmt
+        .query_map([], |row| {
+            let server_id: String = row.get(0)?;
+            let tool_name: Option<String> = row.get(1)?;
+            let total_calls: i64 = row.get(2)?;
+            let last_used: i64 = row.get(3)?;
+
+            Ok(ToolUsageEntry {
+                server_id,
+                tool_name,
+                total_calls: total_calls as u64,
+                last_used_timestamp: last_used,
+            })
+        })
+        .context("failed to query tool usage stats")?;
+
+    entries.map(|e| e.context("failed to read tool usage row")).collect()
 }
 
 // ---------------------------------------------------------------------------

@@ -13,6 +13,7 @@ name = "agentalign"
 version = "0.1.0"
 dependencies = [
  "agentalign-shared",
+ "agenttrim",
  "anyhow",
  "assert_cmd",
  "clap",
