@@ -6,6 +6,7 @@ license.workspace = true
 
 [dependencies]
 agentalign-shared = { path = "../shared" }
+agenttrim = { path = "../agenttrim" }
 clap = { version = "4", features = ["derive"] }
 serde.workspace = true
 serde_json.workspace = true

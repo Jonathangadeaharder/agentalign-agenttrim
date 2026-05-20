@@ -1,5 +1,6 @@
 use agentalign::sync::transaction;
 use agentalign_shared::models::{CanonicalWorkspaceState, McpServerDefinition};
+use agenttrim::analyze::ledger_reader;
 use clap::{Parser, Subcommand};
 use std::collections::HashMap;
 use std::fs;
@@ -277,13 +278,56 @@ fn main() {
         }
 
         Commands::Status => {
-            println!("agentalign — status (not yet implemented)");
+            match ledger_reader::get_usage_stats() {
+                Ok(entries) => {
+                    if entries.is_empty() {
+                        println!("No usage records found. Run `agentalign mark <skill>` to log usage.");
+                    } else {
+                        println!("{:<22} {:>8} {:>12}", "Server", "Calls", "Last Used");
+                        println!("{}", "-".repeat(46));
+                        for e in &entries {
+                            println!("{:<22} {:>8} {:>12}", e.server_id, e.total_call_count, e.last_used_timestamp);
+                        }
+                    }
+                }
+                Err(e) => eprintln!("Error reading usage: {}", e),
+            }
+
+            // Per-tool breakdown
+            match ledger_reader::get_tool_usage_stats() {
+                Ok(tool_entries) => {
+                    if !tool_entries.is_empty() {
+                        println!();
+                        println!("{:<22} {:<22} {:>8} {:>12}", "Server", "Tool", "Calls", "Last Used");
+                        println!("{}", "-".repeat(68));
+                        for e in &tool_entries {
+                            let tool = e.tool_name.as_deref().unwrap_or("(none)");
+                            println!("{:<22} {:<22} {:>8} {:>12}", e.server_id, tool, e.total_calls, e.last_used_timestamp);
+                        }
+                    }
+                }
+                Err(e) => eprintln!("Error reading tool usage: {}", e),
+            }
         }
-        Commands::Mark { skill, unused: _ } => {
-            if let Some(name) = skill {
-                println!("Marked skill '{}'", name);
+
+        Commands::Mark { skill, unused } => {
+            if unused {
+                // Mark as unused: log with special server_id prefix
+                if let Some(name) = &skill {
+                    match ledger_reader::log_usage(&format!("_unused:{}", name), None, "agentalign", None) {
+                        Ok(()) => println!("Marked '{}' as unused. (Recorded for next `agenttrim analyze` run.)", name),
+                        Err(e) => eprintln!("Error marking '{}' as unused: {}", name, e),
+                    }
+                } else {
+                    eprintln!("Usage: agentalign mark <skill-name> --unused");
+                }
+            } else if let Some(name) = skill {
+                match ledger_reader::log_usage(&name, None, "agentalign", None) {
+                    Ok(()) => println!("Marked '{}' as used.", name),
+                    Err(e) => eprintln!("Error marking '{}': {}", name, e),
+                }
             } else {
-                println!("Usage: agentalign mark <skill-name> [--unused]");
+                eprintln!("Usage: agentalign mark <skill-name> [--unused]");
             }
         }
     }

@@ -2,3 +2,6 @@
 .DS_Store
 *.local.json
 local.json
+mutants.out/
+mutants.out.old/
+repomix-output.md
