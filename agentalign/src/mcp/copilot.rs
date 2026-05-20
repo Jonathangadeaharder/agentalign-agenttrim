@@ -32,7 +32,7 @@ impl ConfigurationAdapter for CopilotStrategy {
         "copilot"
     }
 
-    fn deserialize_to_canonical(&self, raw: &str) -> Result<JsonValue> {
+    fn deserialize_to_canonical(&self, raw: &str, _base_path: &Path) -> Result<JsonValue> {
         let raw_val: JsonValue = serde_json::from_str(raw)?;
 
         let servers = raw_val
@@ -90,7 +90,7 @@ impl ConfigurationAdapter for CopilotStrategy {
         Ok(JsonValue::Object(root))
     }
 
-    fn serialize_from_canonical(&self, canonical: &JsonValue) -> Result<String> {
+    fn serialize_from_canonical(&self, canonical: &JsonValue, _base_path: &Path) -> Result<String> {
         let mcp = canonical
             .get("mcp")
             .and_then(|v| v.as_object())
@@ -143,8 +143,8 @@ impl ConfigurationAdapter for CopilotStrategy {
         Ok(serde_json::to_string_pretty(&JsonValue::Object(root))?)
     }
 
-    fn target_config_path(&self, home: &Path) -> std::path::PathBuf {
-        home.join(".config").join("github-copilot").join("mcp.json")
+    fn target_config_path(&self, base_path: &Path) -> std::path::PathBuf {
+        base_path.join(".config").join("github-copilot").join("mcp.json")
     }
 
     fn normalize_env(&self, env: &HashMap<String, String>) -> HashMap<String, String> {

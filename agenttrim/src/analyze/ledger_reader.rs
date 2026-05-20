@@ -129,7 +129,7 @@ pub fn get_unused_since(timestamp: i64) -> Result<Vec<String>> {
 // ---------------------------------------------------------------------------
 
 /// A single skill usage entry from the JSON skill ledger.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct SkillUsageEntry {
     pub used: bool,
     pub last_used: Option<String>,

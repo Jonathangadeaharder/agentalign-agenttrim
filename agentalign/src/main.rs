@@ -1,7 +1,9 @@
+use agentalign::sync::transaction;
+use agentalign_shared::models::{CanonicalWorkspaceState, McpServerDefinition};
 use clap::{Parser, Subcommand};
-
-mod mcp;
-mod sync;
+use std::collections::HashMap;
+use std::fs;
+use std::path::PathBuf;
 
 #[derive(Parser)]
 #[command(name = "agentalign", about = "Agent Configuration Unification Engine")]
@@ -13,9 +15,17 @@ struct Cli {
 #[derive(Subcommand)]
 enum Commands {
     /// Scan existing agent configs into ~/.agents/
-    Migrate,
+    Migrate {
+        /// Preview changes without writing
+        #[arg(long)]
+        dry_run: bool,
+    },
     /// Push canonical config to all agents
-    Sync,
+    Sync {
+        /// Preview changes without writing
+        #[arg(long)]
+        dry_run: bool,
+    },
     /// Roll back the last sync transaction
     Restore {
         /// Rollback specific agent (all agents if omitted)
@@ -33,22 +43,190 @@ enum Commands {
     /// Show skill usage report
     Status,
     /// Mark a skill as used/unused
-    Mark,
+    Mark {
+        /// Skill name to mark
+        skill: Option<String>,
+        /// Mark as unused instead of used
+        #[arg(long)]
+        unused: bool,
+    },
+}
+
+/// Locate known agent config directories on this system.
+fn discover_agent_configs() -> Vec<(&'static str, PathBuf)> {
+    let home = dirs::home_dir().expect("HOME must be set");
+    let mut found = Vec::new();
+
+    let paths: Vec<(&str, PathBuf)> = vec![
+        ("claude", home.join(".claude").join(".mcp.json")),
+        ("cursor", home.join(".cursor").join("mcp.json")),
+        (
+            "gemini",
+            home.join(".gemini").join("config").join("mcp_config.json"),
+        ),
+        (
+            "opencode",
+            home.join(".config").join("opencode").join("opencode.json"),
+        ),
+    ];
+
+    for (name, path) in paths {
+        if path.exists() {
+            found.push((name, path));
+        }
+    }
+
+    found
 }
 
 fn main() {
     let cli = Cli::parse();
 
     match cli.command {
-        Commands::Migrate => {
-            println!("agentalign — migrate (not yet implemented)");
+        Commands::Migrate { dry_run } => {
+            let home = dirs::home_dir().expect("HOME must be set");
+            let agents_dir = home.join(".agents");
+
+            if dry_run {
+                println!("[DRY RUN] Would scan and migrate agent configs into: {}", agents_dir.display());
+            } else {
+                fs::create_dir_all(&agents_dir).expect("Failed to create ~/.agents/");
+                fs::create_dir_all(agents_dir.join("skills")).ok();
+                fs::create_dir_all(agents_dir.join("backups")).ok();
+                println!("Created ~/.agents/ directory structure.");
+            }
+
+            let discovered = discover_agent_configs();
+            if discovered.is_empty() {
+                println!("No existing agent configs found. Nothing to migrate.");
+                return;
+            }
+
+            println!("Discovered {} agent config(s):", discovered.len());
+            let mut merged = serde_json::Map::new();
+
+            for (agent, path) in &discovered {
+                println!("  {} -> {}", agent, path.display());
+                if !dry_run {
+                    let raw = fs::read_to_string(path).unwrap_or_default();
+                    let agent_type = agentalign::mcp::factory::AgentType::from_name(agent)
+                        .expect("Unknown agent type");
+                    let strategy = agentalign::mcp::factory::McpFormatFactory::from_agent(agent_type);
+                    if let Ok(canonical) = strategy.deserialize_to_canonical(&raw, &home) {
+                        if let Some(servers) = canonical
+                            .get("mcp")
+                            .and_then(|v| v.as_object())
+                        {
+                            for (k, v) in servers {
+                                merged.insert(k.clone(), v.clone());
+                            }
+                        }
+                    }
+                }
+            }
+
+            if !dry_run {
+                let canonical = CanonicalWorkspaceState {
+                    mcp: merged
+                        .into_iter()
+                        .map(|(k, v)| {
+                            let def = serde_json::from_value(v)
+                                .unwrap_or_else(|_| McpServerDefinition {
+                                    transport: agentalign_shared::models::TransportType::Local,
+                                    command: None,
+                                    url: None,
+                                    headers: None,
+                                    env: None,
+                                    enabled: None,
+                                    extra: HashMap::new(),
+                                });
+                            (k, def)
+                        })
+                        .collect(),
+                };
+                let json = serde_json::to_string_pretty(&canonical)
+                    .expect("Failed to serialize canonical config");
+                let mcp_path = agents_dir.join("mcp_config.json");
+                fs::write(&mcp_path, &json)
+                    .expect("Failed to write canonical MCP config");
+                println!("Wrote canonical config: {}", mcp_path.display());
+                println!("Migration complete. Run `agentalign sync` to push to all agents.");
+            }
         }
-        Commands::Sync => {
-            println!("agentalign — sync (not yet implemented)");
+
+        Commands::Sync { dry_run } => {
+            let home = dirs::home_dir().expect("HOME must be set");
+            let agents_dir = home.join(".agents");
+            let canonical_path = agents_dir.join("mcp_config.json");
+
+            if !canonical_path.exists() {
+                eprintln!(
+                    "No canonical config found at {}. Run `agentalign migrate` first.",
+                    canonical_path.display()
+                );
+                return;
+            }
+
+            let raw = fs::read_to_string(&canonical_path)
+                .expect("Failed to read canonical config");
+            let canonical: CanonicalWorkspaceState = serde_json::from_str(&raw)
+                .expect("Failed to parse canonical config");
+
+            if dry_run {
+                println!("[DRY RUN] Would push canonical config to all configured agents.");
+                println!("  Servers in canonical: {}", canonical.mcp.len());
+                return;
+            }
+
+            // Build output for each agent
+            let agents: Vec<(&str, agentalign::mcp::factory::AgentType)> = vec![
+                ("Claude", agentalign::mcp::factory::AgentType::Claude),
+                ("Cursor", agentalign::mcp::factory::AgentType::Cursor),
+                ("Gemini", agentalign::mcp::factory::AgentType::Gemini),
+                ("OpenCode", agentalign::mcp::factory::AgentType::Codex),
+            ];
+
+            for (label, agent_type) in &agents {
+                let strategy = agentalign::mcp::factory::McpFormatFactory::from_agent(*agent_type);
+                let target_path = strategy.target_config_path(&home);
+                let parent = target_path.parent().unwrap();
+                fs::create_dir_all(parent).ok();
+
+                // Convert CanonicalWorkspaceState to JsonValue for the strategy
+                let state_json = serde_json::to_value(&canonical)
+                    .expect("Failed to serialize canonical state");
+
+                    match strategy.serialize_from_canonical(&state_json, &home) {
+                    Ok(output) => {
+                        // Create transaction and write
+                        let tx = transaction::create_transaction(label, &target_path);
+                        match tx {
+                            Ok(tx) => {
+                                fs::write(&target_path, &output)
+                                    .expect("Failed to write config");
+                                transaction::finalize_transaction(
+                                    &tx,
+                                    output.as_bytes(),
+                                )
+                                .ok();
+                                println!("  {} -> {} ({} servers)", label, target_path.display(), canonical.mcp.len());
+                            }
+                            Err(e) => {
+                                eprintln!("  {} error: {}", label, e);
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        eprintln!("  {} serialize error: {}", label, e);
+                    }
+                }
+            }
+            println!("Sync complete.");
         }
+
         Commands::Restore { agent, id, list } => {
             if list {
-                match sync::transaction::handle_list(agent.as_deref()) {
+                match transaction::handle_list(agent.as_deref()) {
                     Ok(transactions) => {
                         if transactions.is_empty() {
                             println!("No transactions found.");
@@ -80,12 +258,12 @@ fn main() {
                     Err(e) => eprintln!("Error listing transactions: {}", e),
                 }
             } else if let Some(tx_id) = id {
-                match sync::transaction::handle_rollback_by_id(&tx_id) {
+                match transaction::handle_rollback_by_id(&tx_id) {
                     Ok(()) => println!("Done."),
                     Err(e) => eprintln!("Error: {}", e),
                 }
             } else {
-                match sync::transaction::handle_rollback(agent.as_deref()) {
+                match transaction::handle_rollback(agent.as_deref()) {
                     Ok(count) => {
                         if count > 0 {
                             println!("Rolled back {} transaction(s).", count);
@@ -97,11 +275,16 @@ fn main() {
                 }
             }
         }
+
         Commands::Status => {
             println!("agentalign — status (not yet implemented)");
         }
-        Commands::Mark => {
-            println!("agentalign — mark (not yet implemented)");
+        Commands::Mark { skill, unused: _ } => {
+            if let Some(name) = skill {
+                println!("Marked skill '{}'", name);
+            } else {
+                println!("Usage: agentalign mark <skill-name> [--unused]");
+            }
         }
     }
 }

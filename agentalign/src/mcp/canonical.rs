@@ -19,17 +19,17 @@ impl ConfigurationAdapter for CanonicalStrategy {
         "canonical"
     }
 
-    fn deserialize_to_canonical(&self, raw: &str) -> Result<JsonValue> {
+    fn deserialize_to_canonical(&self, raw: &str, _base_path: &Path) -> Result<JsonValue> {
         let value: JsonValue = serde_json::from_str(raw)?;
         Ok(value)
     }
 
-    fn serialize_from_canonical(&self, canonical: &JsonValue) -> Result<String> {
+    fn serialize_from_canonical(&self, canonical: &JsonValue, _base_path: &Path) -> Result<String> {
         Ok(serde_json::to_string_pretty(canonical)?)
     }
 
-    fn target_config_path(&self, home: &Path) -> std::path::PathBuf {
-        home.join(".agents").join("mcp_config.json")
+    fn target_config_path(&self, base_path: &Path) -> std::path::PathBuf {
+        base_path.join(".agents").join("mcp_config.json")
     }
 
     fn normalize_env(&self, env: &HashMap<String, String>) -> HashMap<String, String> {

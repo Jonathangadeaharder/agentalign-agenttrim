@@ -5,23 +5,13 @@ use std::collections::HashMap;
 use std::path::Path;
 
 /// Configuration adapter: translates between canonical and agent-native formats.
+/// All methods accept an explicit `base_path` to avoid global filesystem dependencies.
 pub trait ConfigurationAdapter {
-    /// Human-readable target name (e.g., "claude", "cursor", "codex")
     fn target_name(&self) -> &'static str;
-
-    /// Parse agent-native config string into canonical JSON value.
-    fn deserialize_to_canonical(&self, raw: &str) -> Result<JsonValue>;
-
-    /// Serialize canonical JSON value into agent-native config string.
-    fn serialize_from_canonical(&self, canonical: &JsonValue) -> Result<String>;
-
-    /// Resolve the target config path for this agent.
-    fn target_config_path(&self, home: &Path) -> std::path::PathBuf;
-
-    /// Normalize environment variable syntax to target dialect.
+    fn deserialize_to_canonical(&self, raw: &str, base_path: &Path) -> Result<JsonValue>;
+    fn serialize_from_canonical(&self, canonical: &JsonValue, base_path: &Path) -> Result<String>;
+    fn target_config_path(&self, base_path: &Path) -> std::path::PathBuf;
     fn normalize_env(&self, env: &HashMap<String, String>) -> HashMap<String, String>;
-
-    /// Extract unknown fields from raw JSON for round-trip preservation.
     fn extract_unknowns(&self, raw: &JsonValue) -> HashMap<String, JsonValue>;
 }
 

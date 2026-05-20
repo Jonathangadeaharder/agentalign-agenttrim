@@ -63,9 +63,15 @@ pub fn check_remote_urls(state: &CanonicalWorkspaceState) -> Result<()> {
             continue;
         }
         match &server.url {
-            None | Some(u) if u.as_deref() == Some("") => {
+            None => {
                 return Err(AdapterError::Validation(format!(
                     "Remote server '{}' is missing a URL",
+                    name
+                )));
+            }
+            Some(u) if u.is_empty() => {
+                return Err(AdapterError::Validation(format!(
+                    "Remote server '{}' has an empty URL",
                     name
                 )));
             }
@@ -134,11 +140,53 @@ mod tests {
         CanonicalWorkspaceState { mcp }
     }
 
+    fn state_with_cmd(name: &str, cmd: Option<Vec<String>>) -> CanonicalWorkspaceState {
+        let mut mcp = HashMap::new();
+        mcp.insert(
+            name.into(),
+            McpServerDefinition {
+                transport: TransportType::Local,
+                command: cmd,
+                url: None,
+                headers: None,
+                env: None,
+                enabled: None,
+                extra: HashMap::new(),
+            },
+        );
+        CanonicalWorkspaceState { mcp }
+    }
+
     #[test]
     fn test_forbidden_chars() {
         let state = make_state("bad/name", TransportType::Local);
         assert!(check_forbidden_chars(&state, &['/', '\\']).is_err());
         assert!(check_forbidden_chars(&state, &['x']).is_ok());
+    }
+
+    #[test]
+    fn test_forbidden_chars_multi_level() {
+        let mut mcp = HashMap::new();
+        mcp.insert(
+            "a\\b".into(),
+            McpServerDefinition {
+                transport: TransportType::Local,
+                command: Some(vec!["npx".into()]),
+                url: None, headers: None, env: None, enabled: None,
+                extra: HashMap::new(),
+            },
+        );
+        mcp.insert(
+            "c/d".into(),
+            McpServerDefinition {
+                transport: TransportType::Local,
+                command: Some(vec!["npx".into()]),
+                url: None, headers: None, env: None, enabled: None,
+                extra: HashMap::new(),
+            },
+        );
+        let state = CanonicalWorkspaceState { mcp };
+        assert!(check_forbidden_chars(&state, &['/', '\\']).is_err());
     }
 
     #[test]
@@ -149,9 +197,131 @@ mod tests {
     }
 
     #[test]
+    fn test_max_id_length_exact_boundary() {
+        let state = make_state(&"a".repeat(64), TransportType::Local);
+        assert!(check_max_id_length(&state, 64).is_ok());
+    }
+
+    #[test]
     fn test_transport_support() {
         let state = make_state("remote", TransportType::Remote);
         assert!(check_transport_support(&state, false, false).is_err());
         assert!(check_transport_support(&state, true, false).is_ok());
+    }
+
+    #[test]
+    fn test_transport_support_local_ok() {
+        let state = make_state("local", TransportType::Local);
+        assert!(check_transport_support(&state, false, false).is_ok());
+    }
+
+    #[test]
+    fn test_transport_support_http_fallback() {
+        let state = make_state("remote", TransportType::Remote);
+        assert!(check_transport_support(&state, false, true).is_ok());
+    }
+
+    #[test]
+    fn test_stdio_paths_empty_cmd() {
+        let state = state_with_cmd("test", Some(vec![]));
+        assert!(check_stdio_paths(&state).is_err());
+    }
+
+    #[test]
+    fn test_stdio_paths_remote_skipped() {
+        let mut mcp = HashMap::new();
+        mcp.insert(
+            "remote".into(),
+            McpServerDefinition {
+                transport: TransportType::Remote,
+                command: None,
+                url: Some("http://localhost".into()),
+                headers: None, env: None, enabled: None,
+                extra: HashMap::new(),
+            },
+        );
+        let state = CanonicalWorkspaceState { mcp };
+        assert!(check_stdio_paths(&state).is_ok());
+    }
+
+    #[test]
+    fn test_stdio_paths_no_cmd() {
+        let state = state_with_cmd("test", None);
+        assert!(check_stdio_paths(&state).is_ok());
+    }
+
+    #[test]
+    fn test_stdio_paths_valid() {
+        let state = state_with_cmd("test", Some(vec!["npx".into(), "@browsermcp/mcp".into()]));
+        assert!(check_stdio_paths(&state).is_ok());
+    }
+
+    #[test]
+    fn test_remote_urls_valid() {
+        let state = make_state("remote", TransportType::Remote);
+        assert!(check_remote_urls(&state).is_ok());
+    }
+
+    #[test]
+    fn test_remote_urls_missing() {
+        let mut mcp = HashMap::new();
+        mcp.insert(
+            "remote".into(),
+            McpServerDefinition {
+                transport: TransportType::Remote,
+                command: None,
+                url: None,
+                headers: None, env: None, enabled: None,
+                extra: HashMap::new(),
+            },
+        );
+        let state = CanonicalWorkspaceState { mcp };
+        assert!(check_remote_urls(&state).is_err());
+    }
+
+    #[test]
+    fn test_remote_urls_empty() {
+        let mut mcp = HashMap::new();
+        mcp.insert(
+            "remote".into(),
+            McpServerDefinition {
+                transport: TransportType::Remote,
+                command: None,
+                url: Some(String::new()),
+                headers: None, env: None, enabled: None,
+                extra: HashMap::new(),
+            },
+        );
+        let state = CanonicalWorkspaceState { mcp };
+        assert!(check_remote_urls(&state).is_err());
+    }
+
+    #[test]
+    fn test_remote_urls_local_skipped() {
+        let state = make_state("local", TransportType::Local);
+        assert!(check_remote_urls(&state).is_ok());
+    }
+
+    #[test]
+    fn test_toml_key_safety_empty() {
+        assert!(check_toml_key_safety("").is_err());
+    }
+
+    #[test]
+    fn test_toml_key_safety_brackets() {
+        assert!(check_toml_key_safety("server[1]").is_err());
+        assert!(check_toml_key_safety("server.1").is_err());
+    }
+
+    #[test]
+    fn test_toml_key_safety_valid() {
+        assert!(check_toml_key_safety("my-server").is_ok());
+        assert!(check_toml_key_safety("my_server").is_ok());
+        assert!(check_toml_key_safety("server-123").is_ok());
+    }
+
+    #[test]
+    fn test_toml_key_safety_mixed_valid() {
+        assert!(check_toml_key_safety("a_b-c").is_ok());
     }
 }
