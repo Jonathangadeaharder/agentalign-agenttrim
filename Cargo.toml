@@ -1,0 +1,22 @@
+[workspace]
+resolver = "2"
+members = [
+    "shared",
+    "agentalign",
+    "agenttrim",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+
+[workspace.dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+toml_edit = "0.22"
+thiserror = "2"
+anyhow = "1"
+dirs = "5"
+uuid = { version = "1", features = ["v4"] }
+sha2 = "0.10"

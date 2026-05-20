@@ -1,0 +1,18 @@
+[package]
+name = "agenttrim"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+agentalign-shared = { path = "../shared" }
+clap = { version = "4", features = ["derive"] }
+serde.workspace = true
+serde_json.workspace = true
+toml_edit.workspace = true
+thiserror.workspace = true
+anyhow.workspace = true
+dirs.workspace = true
+rusqlite = { version = "0.31", features = ["bundled"] }
+sysinfo = "0.33"
+walkdir = "2"
